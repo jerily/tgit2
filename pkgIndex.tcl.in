@@ -1,0 +1,1 @@
+package ifneeded tgit2 @PROJECT_VERSION@ [list load [file join $dir libtgit2[info sharedlibextension]] Tgit2]
