@@ -1,0 +1,37 @@
+package require tcltest 2
+package require tgit2 0.1.0
+namespace import ::tcltest::*
+
+test depth-positive {Depth must be positive} -body {
+    ::tgit2::clone -depth 0 unused unused
+} -returnCodes error -result {depth must be a positive integer}
+
+test local-clone {A clone checks out the committed file} -setup {
+    set upstream [makeDirectory upstream]
+    set work [makeDirectory destinations]
+    exec git -C $upstream init -q
+    set channel [open [file join $upstream recipe] w]
+    puts $channel first
+    close $channel
+    exec git -C $upstream add recipe
+    exec git -C $upstream -c user.name=test -c user.email=test@example.invalid \
+        -c commit.gpgsign=false commit -qm first
+} -body {
+    set target [file join $work {public registry}]
+    ::tgit2::clone $upstream $target
+    set channel [open [file join $target recipe]]
+    try {gets $channel} finally {close $channel}
+} -cleanup {
+    removeDirectory $work
+    removeDirectory $upstream
+} -result first
+
+test clone-error {Clone failures are Tcl errors} -body {
+    catch {::tgit2::clone [file join [temporaryDirectory] missing-source] \
+        [file join [temporaryDirectory] checkout]} message options
+    dict get $options -errorcode
+} -result {TGIT2 CLONE}
+
+set failed $::tcltest::numTests(Failed)
+cleanupTests
+exit [expr {$failed != 0}]
