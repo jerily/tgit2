@@ -1,0 +1,75 @@
+package require tcltest 2
+package require tgit2 0.2.0
+namespace import ::tcltest::*
+
+# Write a test file without adding a platform-dependent line ending.
+proc putFile {path bytes} {
+    set out [open $path wb]
+    try {puts -nonewline $out $bytes} finally {close $out}
+}
+
+test workspace-roundtrip {A standalone export restores both commits and excludes other worktrees} -setup {
+    set dir [makeDirectory {git storage}]
+    set bare [file join $dir store.git]
+    set wt [file join $dir editing]
+    set export [file join $dir saved.git]
+    set root [tgit2::init $bare]
+    tgit2::worktree add $bare editing $wt $root
+} -body {
+    putFile [file join $wt first] old
+    set binary [binary decode hex 00ff0a93]
+    putFile [file join $wt texture] $binary
+    tgit2::stage $wt [list first texture]
+    set one [tgit2::commit $wt {} {Add two files}]
+    file delete [file join $wt first]
+    putFile [file join $wt second] new
+    set status [lsort [dict keys [tgit2::status $wt]]]
+    set patch [tgit2::diff $wt]
+    set two [tgit2::commit $wt {first second} {Replace first with second}]
+    set unchanged [tgit2::commit $wt {} {No changes}]
+    tgit2::ref update $bare refs/heads/main $root $two
+    set stale [catch {tgit2::ref update $bare refs/heads/main $root $one}]
+    putFile [file join $wt private] draft
+    set unpublished [tgit2::commit $wt {private} Draft]
+    tgit2::export_bare $bare $two $export
+    tgit2::worktree remove $bare editing
+    file delete -force $bare
+    file rename $export [set moved [file join $dir {relocated export.git}]]
+    exec git --git-dir=$moved fsck --full --no-reflogs
+    set refs [exec git --git-dir=$moved for-each-ref --format=%(refname)]
+    set absent [catch {exec git --git-dir=$moved cat-file -e $unpublished}]
+    set restored [file join $dir restored]
+    tgit2::worktree add $moved restored $restored $two
+    set in [open [file join $restored texture] rb]
+    try {set same [expr {[read $in] eq $binary}]} finally {close $in}
+    list $status [string match {*deleted file mode*} $patch] [string match {*+new*} $patch] \
+        [expr {$unchanged eq $two}] $stale [expr {[tgit2::verify $moved $two] eq $two}] \
+        [expr {[tgit2::ref get $moved HEAD] eq $two}] $refs $absent \
+        [exec git --git-dir=$moved show ${one}:first] [file exists [file join $restored first]] \
+        $same [tgit2::worktree list $moved]
+} -cleanup {
+    removeDirectory $dir
+} -result {{first second} 1 1 1 1 1 1 refs/heads/main 1 old 0 1 restored}
+
+test workspace-invalid {Existing destinations and invalid names leave repository data intact} -setup {
+    set dir [makeDirectory {occupied paths}]
+    set bare [file join $dir store.git]
+    set root [tgit2::init $bare]
+    set kept [file join $dir kept]
+    file mkdir $kept
+    putFile [file join $kept marker] kept
+} -body {
+    list [catch {tgit2::init $bare}] [catch {tgit2::verify $bare nonsense}] \
+        [catch {tgit2::export_bare $bare $root $kept}] \
+        [catch {tgit2::worktree add $bare ../test $kept $root}] \
+        [catch {tgit2::worktree add $bare test $kept $root}] \
+        [file exists [file join $kept marker]] [tgit2::worktree list $bare] \
+        [tgit2::worktree add $bare test [file join $dir checkout] $root] \
+        [catch {tgit2::worktree prune $bare test}]
+} -cleanup {
+    removeDirectory $dir
+} -result {1 1 1 1 1 1 {} {} 1}
+
+set failed $::tcltest::numTests(Failed)
+cleanupTests
+exit [expr {$failed != 0}]
