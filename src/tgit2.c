@@ -58,21 +58,25 @@ static int clone_cmd(ClientData data, Tcl_Interp *interp, int objc, Tcl_Obj *con
     Tcl_DStringInit(&path);
     if (utf8_string(interp, utf8, objv[objc - 2], &url) == TCL_OK &&
         utf8_string(interp, utf8, destination, &path) == TCL_OK) {
-        if (git_libgit2_init() < 0) {
-            git_failure(interp);
-        } else {
-            if (git_clone(&repo, Tcl_DStringValue(&url), Tcl_DStringValue(&path), &options) == 0)
-                result = TCL_OK;
-            else
-                git_failure(interp);
-            git_repository_free(repo);
-            git_libgit2_shutdown();
-        }
+        if (git_clone(&repo, Tcl_DStringValue(&url), Tcl_DStringValue(&path), &options) == 0)
+            result = TCL_OK;
+        else
+            result = git_failure(interp);
+        git_repository_free(repo);
     }
     Tcl_DStringFree(&path);
     Tcl_DStringFree(&url);
     Tcl_FreeEncoding(utf8);
     return result;
+}
+
+void tgit2_register_workspace(Tcl_Interp *interp);
+
+static void release_git(ClientData data, Tcl_Interp *interp)
+{
+    (void)data;
+    (void)interp;
+    git_libgit2_shutdown();
 }
 
 DLLEXPORT int Tgit2_Init(Tcl_Interp *interp)
@@ -83,6 +87,9 @@ DLLEXPORT int Tgit2_Init(Tcl_Interp *interp)
     if (!Tcl_InitStubs(interp, "8.6", 0)) return TCL_ERROR;
 #endif
     if (!Tcl_CreateNamespace(interp, "::tgit2", NULL, NULL)) return TCL_ERROR;
+    if (git_libgit2_init() < 0) return git_failure(interp);
+    Tcl_CallWhenDeleted(interp, release_git, NULL);
+    tgit2_register_workspace(interp);
     Tcl_CreateObjCommand(interp, "::tgit2::clone", clone_cmd, NULL, NULL);
     return Tcl_PkgProvide(interp, "tgit2", PACKAGE_VERSION);
 }
